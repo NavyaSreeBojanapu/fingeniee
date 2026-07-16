@@ -1,0 +1,408 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>FinGenie — AI Financial Wellness &amp; Loan Transparency</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600;9..144,700&family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+<!-- ================= AUTH GATE — first screen every visitor sees ================= -->
+<div id="authGate">
+  <div class="auth-shell">
+    <div class="auth-brand">
+      <div class="brand-mark"></div>
+      <div><div class="auth-brand-name">FinGenie</div></div>
+    </div>
+    <div class="auth-brand-sub" style="text-align:center;">Financial wellness · Loan transparency</div>
+    <p class="auth-tagline">Sign in to reach your dashboard, agents, and reports — nothing else in FinGenie is reachable until you do.</p>
+
+    <div class="auth-card">
+      <div class="vault-tabs">
+        <button class="vault-tab active" data-tab="signin" onclick="switchVaultTab('signin')">Sign in</button>
+        <button class="vault-tab" data-tab="register" onclick="switchVaultTab('register')">Create account</button>
+        <button class="vault-tab" data-tab="recover" onclick="switchVaultTab('recover')">Forgot password</button>
+      </div>
+
+      <div id="signinPane">
+        <div class="field"><label for="siUser">Username or email</label><input type="text" id="siUser" placeholder="e.g. priya.k"></div>
+        <div class="field"><label for="siPass">Password</label><input type="password" id="siPass" placeholder="Your password"></div>
+        <button class="btn btn-primary" style="width:100%; justify-content:center;" onclick="signIn()">Sign in</button>
+        <div class="vault-note">Sign-in checks against accounts created via "Create account". Credentials are verified by the FinGenie backend API and never stored as plain text.</div>
+      </div>
+
+      <div id="registerPane" style="display:none;">
+        <div class="field"><label for="regUser">Username or email</label><input type="text" id="regUser" placeholder="e.g. priya.k"></div>
+        <div class="field">
+          <label for="regPass">Password</label>
+          <input type="password" id="regPass" placeholder="Choose a strong password">
+          <div class="pw-meter"><div class="seg" id="pwSeg1"></div><div class="seg" id="pwSeg2"></div><div class="seg" id="pwSeg3"></div></div>
+          <ul class="pw-rules">
+            <li id="ruleLen"><span class="chk">✓</span>At least 8 characters</li>
+            <li id="ruleLetter"><span class="chk">✓</span>Contains a letter</li>
+            <li id="ruleNumber"><span class="chk">✓</span>Contains a number</li>
+            <li id="ruleSpecial"><span class="chk">✓</span>Contains @ or a special character</li>
+          </ul>
+        </div>
+        <div class="field"><label for="regQ">Recovery question</label>
+          <select class="full" id="regQ">
+            <option value="school">What was the name of your first school?</option>
+            <option value="city">What city were you born in?</option>
+            <option value="pet">What was the name of your first pet?</option>
+          </select>
+        </div>
+        <div class="field"><label for="regA">Your answer</label><input type="password" id="regA" placeholder="Only you know this answer">
+          <div class="hint">Your answer is sent to the server over the API and stored only as a SHA-256 hash — never as plain text.</div>
+        </div>
+        <button class="btn btn-primary" style="width:100%; justify-content:center;" onclick="registerAccount()">Create secure account</button>
+        <div class="vault-note">Credentials are hashed and stored by the FinGenie backend API. In production this call would run over HTTPS against an encrypted database.</div>
+      </div>
+
+      <div id="recoverPane" style="display:none;">
+        <div class="field"><label for="recUser">Username or email</label><input type="text" id="recUser" placeholder="e.g. priya.k"></div>
+        <div class="field" id="recQField" style="display:none;"><label id="recQLabel">Security question</label><input type="password" id="recA" placeholder="Answer the question above"></div>
+        <button class="btn btn-ghost" id="recStep1Btn" onclick="loadRecoveryQuestion()">Find my account</button>
+        <button class="btn btn-primary" id="recStep2Btn" style="display:none; margin-left:8px;" onclick="verifyRecovery()">Verify answer</button>
+        <div class="vault-note" id="recoverResult" style="display:none;"></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div id="appShell" style="display:none;">
+<div class="topbar">
+  <div class="brand">
+    <div class="brand-mark"></div>
+    <div><div class="brand-name">FinGenie</div><div class="brand-sub">Financial wellness · Loan transparency</div></div>
+  </div>
+  <div class="identity"><span class="dot"></span><span id="maskedId">U••••r_9821</span><button class="btn-ghost btn-sm" style="border:none; background:transparent; color:var(--parchment); padding-left:6px;" onclick="logOut()" title="Sign out">Sign out</button></div>
+</div>
+
+<div class="app-shell">
+  <nav class="sidebar" id="sidebar">
+    <div class="nav-group-label">Overview</div>
+    <div class="nav-item active" data-page="overview"><span class="seal-badge" style="background:var(--gold-soft)">FG</span>Dashboard</div>
+
+    <div class="nav-group-label">Advisory</div>
+    <div class="nav-item" data-page="console"><span class="seal-badge" style="background:#a8c9bb">AC</span>Agent Console</div>
+    <div class="nav-item" data-page="debate"><span class="seal-badge" style="background:#e3b6a9">DR</span>AI Debate Room</div>
+    <div class="nav-item" data-page="family"><span class="seal-badge" style="background:#c9b8e0">FW</span>Family Workspace</div>
+
+    <div class="nav-group-label">Intelligence</div>
+    <div class="nav-item" data-page="stability"><span class="seal-badge" style="background:#9fc4e8">SE</span>Stability Engine</div>
+    <div class="nav-item" data-page="leak"><span class="seal-badge" style="background:#e8b3a4">LD</span>Money Leak Detector</div>
+    <div class="nav-item" data-page="twin"><span class="seal-badge" style="background:#f0d18a">DT</span>Digital Twin</div>
+    <div class="nav-item" data-page="loan"><span class="seal-badge" style="background:#cfd6de">LA</span>Loan Analyzer</div>
+
+    <div class="nav-group-label">Trust</div>
+    <div class="nav-item" data-page="trust"><span class="seal-badge" style="background:#a9d6c9">TC</span>Privacy &amp; Trust Center</div>
+    <div class="nav-item" data-page="admin"><span class="seal-badge" style="background:#d8c39a">AD</span>Admin Panel</div>
+    <div class="nav-item" data-page="account"><span class="seal-badge" style="background:#e6c866">ID</span>Profile &amp; Security</div>
+  </nav>
+
+  <main class="main">
+
+    <!-- ================= OVERVIEW ================= -->
+    <div class="page active" id="page-overview">
+      <section class="section">
+        <div class="section-head">
+          <div><div class="section-tag">Overview</div><h2>Your financial position</h2><p class="lede">A single, honest read on where you stand today — numbers stay hidden until you choose to look.</p></div>
+          <button class="reveal-toggle" id="revealBtn" onclick="toggleReveal()">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7-11-7-11-7z"/><circle cx="12" cy="12" r="3"/></svg>
+            <span id="revealLabel">Reveal figures</span>
+          </button>
+        </div>
+        <div class="grid4">
+          <div class="stat-card"><div class="stat-label">Net monthly income</div><div class="stat-value" data-real="₹85,400" data-masked="₹ ••,•••">₹ ••,•••</div><div class="stat-foot">Budgeting Agent</div></div>
+          <div class="stat-card"><div class="stat-label">Active debt balance</div><div class="stat-value" data-real="₹2,14,000" data-masked="₹ •,••,•••">₹ •,••,•••</div><div class="stat-foot">Debt Agent · 3 accounts</div></div>
+          <div class="stat-card"><div class="stat-label">Savings runway</div><div class="stat-value" data-real="6.2 mo" data-masked="•.• mo">•.• mo</div><div class="stat-foot">Savings Agent</div></div>
+          <div class="stat-card"><div class="stat-label">Stability index</div><div class="stat-value" data-real="68 / 100" data-masked="•• / 100">•• / 100</div><div class="stat-foot">Stability Engine</div></div>
+        </div>
+        <div class="grid3" style="margin-top:22px;">
+          <div class="card"><h3 style="font-size:15px;">Talk to your agents</h3><p class="lede" style="margin-top:8px;">Ask budgeting, debt, savings, loan or tax questions by text or voice.</p><button class="btn btn-ghost btn-sm" style="margin-top:12px;" onclick="showPage('console')">Open console →</button></div>
+          <div class="card"><h3 style="font-size:15px;">Found a leak this week</h3><p class="lede" style="margin-top:8px;">₹1,860/yr in forgotten subscriptions detected across two cards.</p><button class="btn btn-ghost btn-sm" style="margin-top:12px;" onclick="showPage('leak')">Review leaks →</button></div>
+          <div class="card"><h3 style="font-size:15px;">Loan under review</h3><p class="lede" style="margin-top:8px;">One document flagged for a prepayment penalty clause.</p><button class="btn btn-ghost btn-sm" style="margin-top:12px;" onclick="showPage('loan')">Open analyzer →</button></div>
+        </div>
+      </section>
+    </div>
+
+    <!-- ================= AGENT CONSOLE ================= -->
+    <div class="page" id="page-console">
+      <section class="section">
+        <div class="section-head">
+          <div><div class="section-tag">Advisory swarm</div><h2>Ask your agents anything</h2></div>
+          <select class="lang-select" id="langSelect">
+            <option value="en-IN">English (India)</option>
+            <option value="hi-IN">हिन्दी — Hindi</option>
+            <option value="ta-IN">தமிழ் — Tamil</option>
+            <option value="es-ES">Español</option>
+            <option value="fr-FR">Français</option>
+          </select>
+        </div>
+        <div class="console">
+          <div class="agent-rail" id="agentRail">
+            <div class="agent-item active" data-agent="budget"><span class="swatch" style="background:#4F7965"></span>Budgeting Agent</div>
+            <div class="agent-item" data-agent="debt"><span class="swatch" style="background:#B24C3B"></span>Debt Agent</div>
+            <div class="agent-item" data-agent="savings"><span class="swatch" style="background:#C9A227"></span>Savings Agent</div>
+            <div class="agent-item" data-agent="loan"><span class="swatch" style="background:#1B2A41"></span>Legal / Loan Agent</div>
+            <div class="agent-item" data-agent="tax"><span class="swatch" style="background:#7B6DB0"></span>Taxation Agent</div>
+          </div>
+          <div class="console-body">
+            <div class="chat-log" id="chatLog">
+              <div class="msg agent"><span class="tag">Budgeting Agent</span>I've mapped your income and recurring bills. Ask about your budget, or use the mic — I can reply in the language selected above.</div>
+            </div>
+            <div class="composer">
+              <input type="text" id="chatInput" placeholder="Ask about your budget, debt, savings, or loan…">
+              <button class="mic-btn" id="micBtn" title="Speak to your agent">
+                <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg>
+              </button>
+              <button class="btn btn-primary" onclick="sendChat()">Send</button>
+            </div>
+            <div class="console-status" id="consoleStatus">Status: idle</div>
+          </div>
+        </div>
+      </section>
+    </div>
+
+    <!-- ================= AI DEBATE ROOM ================= -->
+    <div class="page" id="page-debate">
+      <section class="section">
+        <div class="section-head"><div><div class="section-tag">Two agents, one decision</div><h2>AI Debate Room</h2><p class="lede">Pick a real financial fork in the road. A growth-leaning agent and a risk-averse agent argue it out, then a moderator gives you a verdict you can actually use.</p></div></div>
+        <div class="card">
+          <div class="field" style="max-width:420px;">
+            <label for="debateTopic">Choose a topic</label>
+            <select class="full" id="debateTopic">
+              <option value="prepay">Prepay my loan vs. invest the surplus</option>
+              <option value="rent">Buy a home vs. keep renting</option>
+              <option value="rate">Fixed-rate vs. floating-rate loan</option>
+            </select>
+          </div>
+          <button class="btn btn-primary" onclick="startDebate()">Start debate</button>
+          <div class="debate-grid">
+            <div class="debate-col a"><h3>🌱 Growth Agent</h3><div id="debateA"></div></div>
+            <div class="debate-col b"><h3>🛡️ Risk-Averse Agent</h3><div id="debateB"></div></div>
+          </div>
+          <div class="verdict-card" id="debateVerdict"></div>
+        </div>
+      </section>
+    </div>
+
+    <!-- ================= FAMILY WORKSPACE ================= -->
+    <div class="page" id="page-family">
+      <section class="section">
+        <div class="section-head"><div><div class="section-tag">Shared finances</div><h2>Family Workspace</h2><p class="lede">Give each family member the right level of access, and work toward shared goals together.</p></div></div>
+        <div class="grid2">
+          <div class="card">
+            <h3 style="font-size:15px; margin-bottom:10px;">Members</h3>
+            <div id="familyList">
+              <div class="family-row"><div style="display:flex; align-items:center; gap:10px;"><div class="avatar" style="background:var(--sage);">P</div><div><div style="font-weight:600; font-size:13.5px;">Priya · Parent</div><div style="font-size:12px; color:#8a8371;">Full access</div></div></div><select class="lang-select"><option>Can edit</option><option>View only</option></select></div>
+              <div class="family-row"><div style="display:flex; align-items:center; gap:10px;"><div class="avatar" style="background:var(--violet);">A</div><div><div style="font-weight:600; font-size:13.5px;">Arjun · Parent</div><div style="font-size:12px; color:#8a8371;">Full access</div></div></div><select class="lang-select"><option>Can edit</option><option>View only</option></select></div>
+              <div class="family-row"><div style="display:flex; align-items:center; gap:10px;"><div class="avatar" style="background:var(--gold);">K</div><div><div style="font-weight:600; font-size:13.5px;">Kavya · Teen</div><div style="font-size:12px; color:#8a8371;">Restricted</div></div></div><select class="lang-select"><option>View only</option><option>Can edit</option></select></div>
+            </div>
+            <div class="field" style="margin-top:16px; display:flex; gap:8px; align-items:flex-end;">
+              <div style="flex:1;"><label for="famEmail">Invite a family member</label><input type="text" id="famEmail" placeholder="name@example.com"></div>
+              <button class="btn btn-ghost btn-sm" onclick="addFamilyMember()">Add</button>
+            </div>
+          </div>
+          <div class="card">
+            <h3 style="font-size:15px;">Shared goal — Family emergency fund</h3>
+            <p class="lede" id="familyGoalText" style="margin:8px 0 12px;">₹1,86,000 of ₹3,00,000 target</p>
+            <div class="progress-track"><div class="progress-fill" id="familyGoalFill" style="width:62%;"></div></div>
+            <div style="margin-top:16px; font-size:13px; color:#6b6357;">Contributors this month: Priya ₹12,000 · Arjun ₹9,500 · Auto-round-up ₹640</div>
+          </div>
+        </div>
+      </section>
+    </div>
+
+    <!-- ================= STABILITY ENGINE ================= -->
+    <div class="page" id="page-stability">
+      <section class="section">
+        <div class="section-head"><div><div class="section-tag">Financial Stability Engine</div><h2>How steady is your financial footing?</h2><p class="lede">One composite score, built from four signals the agents track continuously.</p></div></div>
+        <div class="grid2">
+          <div class="card seal-wrap">
+            <div class="seal"><svg viewBox="0 0 120 120">
+              <circle cx="60" cy="60" r="52" fill="none" stroke="#EAE3D3" stroke-width="10"/>
+              <circle cx="60" cy="60" r="52" fill="none" stroke="#4F7965" stroke-width="10" stroke-linecap="round" stroke-dasharray="326.7" stroke-dashoffset="105" transform="rotate(-90 60 60)"/>
+            </svg><div class="seal-score"><div class="n">68</div><div class="l">Stability index</div></div></div>
+            <div class="verdict" style="background:#eef3f0; color:var(--sage);">Moderately stable</div>
+          </div>
+          <div class="card">
+            <div class="metric-row"><div class="top"><span>Income consistency</span><span>81%</span></div><div class="bar-track"><div class="bar-fill" style="width:81%; background:var(--sage);"></div></div></div>
+            <div class="metric-row"><div class="top"><span>Expense volatility</span><span>54%</span></div><div class="bar-track"><div class="bar-fill" style="width:54%; background:var(--gold);"></div></div></div>
+            <div class="metric-row"><div class="top"><span>Debt load</span><span>62%</span></div><div class="bar-track"><div class="bar-fill" style="width:62%; background:var(--clay);"></div></div></div>
+            <div class="metric-row"><div class="top"><span>Emergency buffer</span><span>73%</span></div><div class="bar-track"><div class="bar-fill" style="width:73%; background:var(--violet);"></div></div></div>
+            <p class="lede" style="margin-top:6px;">Expense volatility is your biggest drag this quarter — dining and subscription spend swing widely month to month.</p>
+          </div>
+        </div>
+      </section>
+    </div>
+
+    <!-- ================= MONEY LEAK DETECTOR ================= -->
+    <div class="page" id="page-leak">
+      <section class="section">
+        <div class="section-head"><div><div class="section-tag">Quiet drains on your money</div><h2>Money Leak Detector</h2><p class="lede">Forgotten subscriptions, duplicate charges, and fee creep — found and totalled.</p></div>
+          <button class="btn btn-primary" onclick="scanLeaks()">Scan for leaks</button>
+        </div>
+        <div class="card">
+          <div id="leakSummary" style="display:none; margin-bottom:14px; font-size:14px;">Total detected: <strong class="mono" id="leakTotal">₹0</strong> per year</div>
+          <div id="leakList"><p class="lede">Run a scan to see what's quietly leaving your account.</p></div>
+        </div>
+      </section>
+    </div>
+
+    <!-- ================= DIGITAL TWIN ================= -->
+    <div class="page" id="page-twin">
+      <section class="section">
+        <div class="section-head"><div><div class="section-tag">Financial Digital Twin</div><h2>Simulate your future self</h2><p class="lede">Move the sliders to see how small changes today compound over time.</p></div></div>
+        <div class="grid2">
+          <div class="card">
+            <div class="slider-row"><div class="top"><span>Extra monthly savings</span><span class="mono" id="twinSavingsVal">₹5,000</span></div><input type="range" id="twinSavings" min="0" max="20000" step="500" value="5000"></div>
+            <div class="slider-row"><div class="top"><span>Projection horizon</span><span class="mono" id="twinYearsVal">10 yrs</span></div><input type="range" id="twinYears" min="1" max="20" step="1" value="10"></div>
+            <div class="slider-row"><div class="top"><span>Assumed annual return</span><span class="mono" id="twinReturnVal">7%</span></div><input type="range" id="twinReturn" min="2" max="14" step="0.5" value="7"></div>
+            <p class="lede" id="twinNarrative"></p>
+          </div>
+          <div class="card">
+            <svg id="twinChart" viewBox="0 0 320 180" style="width:100%; height:auto;"></svg>
+            <div style="display:flex; justify-content:space-between; margin-top:10px; font-size:12.5px; color:#6b6357;"><span>Today</span><span id="twinHorizonLabel">10 years</span></div>
+            <div style="margin-top:10px; font-size:14px;">Projected net worth: <strong class="mono" id="twinFinal">—</strong></div>
+          </div>
+        </div>
+      </section>
+    </div>
+
+    <!-- ================= LOAN ANALYZER ================= -->
+    <div class="page" id="page-loan">
+      <section class="section">
+        <div class="section-head"><div><div class="section-tag">Legal / Loan Agent</div><h2>Loan document analyzer</h2></div></div>
+        <div class="grid2">
+          <div class="card">
+            <div class="dropzone" id="dropzone">
+              <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#8a8371" stroke-width="1.6" style="margin:0 auto;"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/></svg>
+              <p><strong>Drop a loan PDF here</strong>, or click to choose a file.</p>
+              <p>Processed only in memory for this demo — nothing is uploaded anywhere.</p>
+              <input type="file" id="fileInput" accept="application/pdf" style="display:none">
+            </div>
+            <div id="fileChipWrap"></div>
+            <ul class="flag-list" id="flagList" style="display:none;"></ul>
+          </div>
+          <div class="card seal-wrap">
+            <div class="seal"><svg viewBox="0 0 120 120">
+              <circle cx="60" cy="60" r="52" fill="none" stroke="#EAE3D3" stroke-width="10"/>
+              <circle id="sealArc" cx="60" cy="60" r="52" fill="none" stroke="#C9A227" stroke-width="10" stroke-linecap="round" stroke-dasharray="326.7" stroke-dashoffset="326.7" transform="rotate(-90 60 60)"/>
+            </svg><div class="seal-score"><div class="n" id="sealScore">—</div><div class="l">Integrity score</div></div></div>
+            <div class="verdict" id="sealVerdict" style="background:var(--parchment-dim); color:#6b6357;">Awaiting document</div>
+          </div>
+        </div>
+      </section>
+    </div>
+
+    <!-- ================= PRIVACY VAULT & TRUST CENTER ================= -->
+    <div class="page" id="page-trust">
+      <section class="section">
+        <div class="section-head"><div><div class="section-tag">Privacy Vault</div><h2>Trust Center</h2><p class="lede">How your data is protected, who can see what, and what's happened on your account recently.</p></div></div>
+
+        <div class="grid2">
+          <div class="card">
+            <h3 style="font-size:15px; margin-bottom:6px;">Data protection practices</h3>
+            <div class="trust-item"><div class="ico">🔒</div><div><strong style="font-size:13.5px;">Encrypted at rest</strong><p class="lede" style="margin-top:2px;">Financial figures are encrypted (AES-256) in storage.</p></div></div>
+            <div class="trust-item"><div class="ico">🔗</div><div><strong style="font-size:13.5px;">Encrypted in transit</strong><p class="lede" style="margin-top:2px;">All traffic runs over TLS 1.3.</p></div></div>
+            <div class="trust-item"><div class="ico">📄</div><div><strong style="font-size:13.5px;">In-memory document parsing</strong><p class="lede" style="margin-top:2px;">Loan PDFs are read in memory and never written to disk.</p></div></div>
+            <div class="trust-item"><div class="ico">🔑</div><div><strong style="font-size:13.5px;">Hashed credentials</strong><p class="lede" style="margin-top:2px;">Passwords and recovery answers are hashed, never stored as plain text.</p></div></div>
+          </div>
+
+          <div class="card">
+            <h3 style="font-size:15px; margin-bottom:10px;">Active sessions</h3>
+            <table id="sessionTable">
+              <tr><th>Device</th><th>Location</th><th>Last active</th><th></th></tr>
+              <tr><td>Chrome · macOS</td><td>Chennai, IN</td><td>Just now</td><td><span class="pill" style="background:#eef3f0; color:var(--sage);">This device</span></td></tr>
+              <tr><td>FinGenie App · Android</td><td>Chennai, IN</td><td>2 hrs ago</td><td><button class="btn btn-ghost btn-sm" onclick="this.closest('tr').remove()">Revoke</button></td></tr>
+              <tr><td>Safari · iOS</td><td>Bengaluru, IN</td><td>3 days ago</td><td><button class="btn btn-ghost btn-sm" onclick="this.closest('tr').remove()">Revoke</button></td></tr>
+            </table>
+
+            <h3 style="font-size:15px; margin:18px 0 10px;">Consent</h3>
+            <div class="trust-item" style="align-items:center;"><div style="flex:1;"><strong style="font-size:13px;">Share anonymized data for benchmarking</strong></div><div class="toggle on" onclick="this.classList.toggle('on')"><div class="knob"></div></div></div>
+            <div class="trust-item" style="align-items:center;"><div style="flex:1;"><strong style="font-size:13px;">Allow voice recordings for QA review</strong></div><div class="toggle" onclick="this.classList.toggle('on')"><div class="knob"></div></div></div>
+
+            <h3 style="font-size:15px; margin:18px 0 8px;">Recent security events</h3>
+            <p class="lede">Jul 14 — New device sign-in (Android)<br>Jul 09 — Recovery question updated<br>Jun 28 — Password changed</p>
+          </div>
+        </div>
+      </section>
+    </div>
+
+    <!-- ================= ADMIN PANEL ================= -->
+    <div class="page" id="page-admin">
+      <section class="section">
+        <div class="section-head"><div><div class="section-tag">Staff view</div><h2>Admin Panel</h2><p class="lede">Operational view for the team running the platform — not visible to end users.</p></div></div>
+        <div class="grid4" style="margin-bottom:18px;">
+          <div class="card"><div class="stat-label" style="color:#6b6357;">Active users</div><div class="stat-value" style="color:var(--ink);">4,812</div></div>
+          <div class="card"><div class="stat-label" style="color:#6b6357;">Docs analyzed today</div><div class="stat-value" style="color:var(--ink);">312</div></div>
+          <div class="card"><div class="stat-label" style="color:#6b6357;">Flags raised</div><div class="stat-value" style="color:var(--ink);">57</div></div>
+          <div class="card"><div class="stat-label" style="color:#6b6357;">Avg response time</div><div class="stat-value" style="color:var(--ink);">1.8s</div></div>
+        </div>
+        <div class="card" style="margin-bottom:18px;">
+          <h3 style="font-size:15px; margin-bottom:10px;">Users</h3>
+          <table>
+            <tr><th>User</th><th>Risk flags</th><th>Last active</th><th>Status</th><th></th></tr>
+            <tr><td>priya.k</td><td>0</td><td>Just now</td><td><span class="status-dot" style="background:var(--sage);"></span>Active</td><td><button class="btn btn-ghost btn-sm" onclick="this.closest('tr').style.opacity=0.4">Suspend</button></td></tr>
+            <tr><td>arjun.m</td><td>1</td><td>1 hr ago</td><td><span class="status-dot" style="background:var(--sage);"></span>Active</td><td><button class="btn btn-ghost btn-sm" onclick="this.closest('tr').style.opacity=0.4">Suspend</button></td></tr>
+            <tr><td>rahul_v</td><td>3</td><td>2 days ago</td><td><span class="status-dot" style="background:var(--clay);"></span>Under review</td><td><button class="btn btn-ghost btn-sm" onclick="this.closest('tr').style.opacity=0.4">Suspend</button></td></tr>
+          </table>
+        </div>
+        <div class="card">
+          <h3 style="font-size:15px; margin-bottom:10px;">Feature flags</h3>
+          <div class="trust-item" style="align-items:center;"><div style="flex:1;">AI Debate Room</div><div class="toggle on" onclick="this.classList.toggle('on')"><div class="knob"></div></div></div>
+          <div class="trust-item" style="align-items:center;"><div style="flex:1;">Voice assistant</div><div class="toggle on" onclick="this.classList.toggle('on')"><div class="knob"></div></div></div>
+          <div class="trust-item" style="align-items:center;"><div style="flex:1;">Family workspace</div><div class="toggle" onclick="this.classList.toggle('on')"><div class="knob"></div></div></div>
+        </div>
+      </section>
+    </div>
+
+    <!-- ================= PROFILE & SECURITY ================= -->
+    <div class="page" id="page-account">
+      <section class="section">
+        <div class="section-head"><div><div class="section-tag">Signed in</div><h2>Profile &amp; security</h2><p class="lede">Your identity, language and theme preferences, and quick access to signing out.</p></div></div>
+        <div class="grid2">
+          <div class="card">
+            <h3 style="font-size:15px; margin-bottom:10px;">Identity</h3>
+            <div class="field"><label>Signed in as</label><div class="mono" id="profileUser" style="font-size:14px;">—</div></div>
+            <div class="field"><label>Occupation</label><input type="text" class="full" placeholder="e.g. Product Manager"></div>
+            <div class="field"><label>Risk appetite</label><select class="full"><option>Conservative</option><option>Balanced</option><option>Growth-focused</option></select></div>
+            <button class="btn btn-ghost" onclick="logOut()">Sign out</button>
+          </div>
+          <div class="card">
+            <h3 style="font-size:15px; margin-bottom:10px;">Preferences</h3>
+            <div class="field"><label>Language</label>
+              <select class="full">
+                <option>English</option><option>हिन्दी — Hindi</option><option>తెలుగు — Telugu</option>
+                <option>தமிழ் — Tamil</option><option>ಕನ್ನಡ — Kannada</option><option>മലയാളം — Malayalam</option>
+              </select>
+            </div>
+            <div class="field"><label>Theme</label><select class="full"><option>Light</option><option>Dark</option></select></div>
+            <div class="trust-item" style="align-items:center; border:none; padding-top:6px;"><div style="flex:1;">Email notifications</div><div class="toggle on" onclick="this.classList.toggle('on')"><div class="knob"></div></div></div>
+          </div>
+        </div>
+      </section>
+    </div>
+
+    <footer>FinGenie — a working demo of the AI-Powered Financial Wellness &amp; Loan Transparency concept. Figures, agent replies, debates and document flags shown here are simulated for illustration.</footer>
+  </main>
+</div>
+
+<button class="voice-fab" id="voiceFab" title="Voice assistant — ask anything">
+  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg>
+</button>
+<div class="voice-fab-label" id="voiceFabLabel">Voice assistant</div>
+
+</div><!-- /#appShell -->
+
+<div class="toast" id="toast"></div>
+
+
+
+<script src="app.js"></script>
+</body>
+</html>

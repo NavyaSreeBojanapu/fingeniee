@@ -1,0 +1,18 @@
+{
+  "name": "fingenie",
+  "version": "1.0.0",
+  "description": "FinGenie — AI financial wellness & loan transparency demo (Express backend + static frontend served from one app)",
+  "main": "server.js",
+  "license": "MIT",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js"
+  },
+  "dependencies": {
+    "cors": "^2.8.5",
+    "express": "^4.19.2"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
