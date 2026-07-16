@@ -40,6 +40,7 @@ const {
   countUsers,
   listUsersForAdmin,
 } = require('./db');
+const { isConfigured: aiConfigured, chatReply, chatJSON } = require('./claude');
 
 const app = express();
 const PORT = process.env.PORT || 4000;
@@ -230,12 +231,35 @@ const agentReplies = {
   ],
 };
 
-app.post('/api/agents/chat', requireAuth, (req, res) => {
+app.post('/api/agents/chat', requireAuth, async (req, res) => {
   const { agent, message } = req.body || {};
-  const pool = agentReplies[agent] || agentReplies.budget;
-  const reply = pool[Math.floor(Math.random() * pool.length)];
-  addAgentMessage.run(req.username, agent || 'budget', message || null, reply);
-  res.json({ ok: true, agent, agentLabel: agentNames[agent] || 'Agent', reply });
+  const agentKey = agent || 'budget';
+  const label = agentNames[agentKey] || 'Agent';
+
+  let reply;
+  if (aiConfigured && message) {
+    try {
+      seedOverviewStats.run(req.username);
+      const stats = getOverviewStats.get(req.username);
+      const systemPrompt =
+        `You are the ${label} for FinGenie, a personal finance app for Indian users. ` +
+        `User's net monthly income: ₹${stats.netMonthlyIncome}, active debt: ₹${stats.activeDebtBalance}, ` +
+        `savings runway: ${stats.savingsRunwayMonths} months, stability index: ${stats.stabilityIndex}/100. ` +
+        `Answer the user's question in 2-4 sentences, concrete and specific, using ₹ figures where relevant. ` +
+        `Stay strictly within the ${label}'s domain.`;
+      reply = await chatReply(systemPrompt, message);
+    } catch (err) {
+      console.error('Claude agent chat failed, falling back to canned reply:', err.message);
+    }
+  }
+
+  if (!reply) {
+    const pool = agentReplies[agentKey] || agentReplies.budget;
+    reply = pool[Math.floor(Math.random() * pool.length)];
+  }
+
+  addAgentMessage.run(req.username, agentKey, message || null, reply);
+  res.json({ ok: true, agent: agentKey, agentLabel: label, reply });
 });
 
 app.get('/api/agents/history', requireAuth, (req, res) => {
@@ -284,10 +308,28 @@ const debateScripts = {
   },
 };
 
-app.get('/api/debate/:topic', requireAuth, (req, res) => {
-  const script = debateScripts[req.params.topic];
-  if (!script) return res.status(404).json({ ok: false, error: 'Unknown debate topic.' });
-  res.json({ ok: true, script });
+app.get('/api/debate/:topic', requireAuth, async (req, res) => {
+  const topicKey = req.params.topic;
+  const canned = debateScripts[topicKey];
+
+  if (aiConfigured) {
+    try {
+      const topicLabel = canned ? topicKey : topicKey.replace(/[-_]/g, ' ');
+      const systemPrompt =
+        `You are simulating a financial debate between two agents, Agent A and Agent B, arguing opposite ` +
+        `sides of a personal-finance decision for an Indian user. Return ONLY a JSON object, no markdown, ` +
+        `no prose outside the JSON, shaped exactly like: ` +
+        `{"a": ["point 1", "point 2"], "b": ["point 1", "point 2"], "verdict": "Verdict: ..."}. ` +
+        `Each point should be one concrete sentence. The verdict should be a single balanced sentence.`;
+      const script = await chatJSON(systemPrompt, `Debate topic: ${topicLabel}`);
+      return res.json({ ok: true, script });
+    } catch (err) {
+      console.error('Claude debate generation failed, falling back:', err.message);
+    }
+  }
+
+  if (!canned) return res.status(404).json({ ok: false, error: 'Unknown debate topic.' });
+  res.json({ ok: true, script: canned });
 });
 
 /* ------------------------------------------------------------------ */
@@ -314,13 +356,28 @@ app.post('/api/family/invite', requireAuth, (req, res) => {
 /*  Financial Stability Engine                                          */
 /* ------------------------------------------------------------------ */
 
-app.get('/api/stability', requireAuth, (req, res) => {
+app.get('/api/stability', requireAuth, async (req, res) => {
   let snap = getLatestStability.get(req.username);
   if (!snap) {
-    // First time this user hits the endpoint: compute and store a snapshot.
+    let note = 'Expense volatility is your biggest drag this quarter — dining and subscription spend swing widely month to month.';
+    const metrics = { incomeConsistency: 81, expenseVolatility: 54, debtLoad: 62, emergencyBuffer: 73 };
+
+    if (aiConfigured) {
+      try {
+        const systemPrompt =
+          `You are the Financial Stability Engine for a personal finance app. Given these 0-100 metrics for a ` +
+          `user (higher is better, except note debtLoad/expenseVolatility where lower is healthier), write ONE ` +
+          `sentence identifying the biggest drag on their stability and a concrete next step. Plain text only, no JSON.`;
+        note = await chatReply(systemPrompt, JSON.stringify(metrics), 120);
+      } catch (err) {
+        console.error('Claude stability note failed, falling back:', err.message);
+      }
+    }
+
     addStabilitySnapshot.run(
-      req.username, 68, 'Moderately stable', 81, 54, 62, 73,
-      'Expense volatility is your biggest drag this quarter — dining and subscription spend swing widely month to month.'
+      req.username, 68, 'Moderately stable',
+      metrics.incomeConsistency, metrics.expenseVolatility, metrics.debtLoad, metrics.emergencyBuffer,
+      note
     );
     snap = getLatestStability.get(req.username);
   }
@@ -342,12 +399,32 @@ app.get('/api/stability', requireAuth, (req, res) => {
 /*  Money leak detector                                                 */
 /* ------------------------------------------------------------------ */
 
-app.post('/api/leak-scan', requireAuth, (req, res) => {
-  const leaks = [
-    { name: 'Unused streaming subscription', detail: 'No activity in 4 months', amt: 499 * 12 },
-    { name: 'Duplicate insurance premium', detail: 'Charged on two linked cards', amt: 2400 },
-    { name: 'Bank maintenance fee creep', detail: 'Fee rose 3x without notice', amt: 1200 },
-  ];
+app.post('/api/leak-scan', requireAuth, async (req, res) => {
+  const { transactions } = req.body || {}; // optional: array of {desc, amount, date} the frontend can send
+  let leaks;
+
+  if (aiConfigured && Array.isArray(transactions) && transactions.length > 0) {
+    try {
+      const systemPrompt =
+        `You are a money-leak detector for a personal finance app. Given a list of transactions, find ` +
+        `recurring or wasteful charges (unused subscriptions, duplicate charges, fee creep, etc). Return ` +
+        `ONLY a JSON object shaped exactly like: ` +
+        `{"leaks": [{"name": "...", "detail": "...", "amt": 1234}]}. Amounts in ₹, integers. Max 5 leaks.`;
+      const result = await chatJSON(systemPrompt, JSON.stringify(transactions));
+      leaks = result.leaks;
+    } catch (err) {
+      console.error('Claude leak scan failed, falling back to demo leaks:', err.message);
+    }
+  }
+
+  if (!leaks) {
+    leaks = [
+      { name: 'Unused streaming subscription', detail: 'No activity in 4 months', amt: 499 * 12 },
+      { name: 'Duplicate insurance premium', detail: 'Charged on two linked cards', amt: 2400 },
+      { name: 'Bank maintenance fee creep', detail: 'Fee rose 3x without notice', amt: 1200 },
+    ];
+  }
+
   const total = leaks.reduce((sum, l) => sum + l.amt, 0);
   addLeakScan.run(req.username, JSON.stringify(leaks), total);
   res.json({ ok: true, leaks, total });
@@ -399,15 +476,37 @@ app.post('/api/twin/project', requireAuth, (req, res) => {
 /*  Loan document analyzer (mock clause-scanning)                       */
 /* ------------------------------------------------------------------ */
 
-app.post('/api/loan/analyze', requireAuth, (req, res) => {
-  const { filename, sizeKb } = req.body || {};
-  const flags = [
-    { t: 'Clause 4.2', d: 'Prepayment penalty of 3% — above the typical regulatory ceiling for this loan category.' },
-    { t: 'Clause 7.1', d: 'Processing fee described as "up to 2.5%" without a fixed figure.' },
-    { t: 'Clause 9.4', d: 'Variable rate reset clause lacks a stated cap.' },
-  ];
-  const integrityScore = 72;
-  const verdict = 'Suspicious clauses found';
+app.post('/api/loan/analyze', requireAuth, async (req, res) => {
+  const { filename, sizeKb, text } = req.body || {}; // frontend should extract text client-side and send it
+  let flags, integrityScore, verdict;
+
+  if (aiConfigured && text) {
+    try {
+      const systemPrompt =
+        `You are a loan document analyzer for a personal finance app. Read the loan/agreement text and find ` +
+        `clauses that are unfavorable, unusually costly, or vaguely worded (penalties, fees, rate resets, ` +
+        `lock-ins). Return ONLY a JSON object shaped exactly like: ` +
+        `{"flags": [{"t": "Clause reference or short title", "d": "one sentence explanation"}], ` +
+        `"integrityScore": 0-100, "verdict": "short verdict phrase"}. Max 6 flags.`;
+      const result = await chatJSON(systemPrompt, text, 900);
+      flags = result.flags;
+      integrityScore = result.integrityScore;
+      verdict = result.verdict;
+    } catch (err) {
+      console.error('Claude loan analysis failed, falling back to demo flags:', err.message);
+    }
+  }
+
+  if (!flags) {
+    flags = [
+      { t: 'Clause 4.2', d: 'Prepayment penalty of 3% — above the typical regulatory ceiling for this loan category.' },
+      { t: 'Clause 7.1', d: 'Processing fee described as "up to 2.5%" without a fixed figure.' },
+      { t: 'Clause 9.4', d: 'Variable rate reset clause lacks a stated cap.' },
+    ];
+    integrityScore = 72;
+    verdict = 'Suspicious clauses found';
+  }
+
   addLoanAnalysis.run(
     req.username, filename || 'document.pdf', sizeKb || 0, JSON.stringify(flags), integrityScore, verdict
   );
