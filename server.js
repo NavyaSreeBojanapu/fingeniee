@@ -15,6 +15,31 @@
 const express = require('express');
 const cors = require('cors');
 const crypto = require('crypto');
+const {
+  getUser,
+  createUser,
+  createSession,
+  getSessionUser,
+  deleteSession,
+  getSessionsForUser,
+  getFamilyMembers,
+  addFamilyMember,
+  getFamilyGoal,
+  getOverviewStats,
+  seedOverviewStats,
+  addAgentMessage,
+  getAgentMessages,
+  addStabilitySnapshot,
+  getLatestStability,
+  addLeakScan,
+  getLeakScans,
+  addTwinProjection,
+  addLoanAnalysis,
+  addTrustEvent,
+  getTrustEvents,
+  countUsers,
+  listUsersForAdmin,
+} = require('./db');
 
 const app = express();
 const PORT = process.env.PORT || 4000;
@@ -27,28 +52,17 @@ app.use(express.json());
 app.use(express.static(__dirname));
 
 /* ------------------------------------------------------------------ */
-/*  In-memory "database" (swap for a real DB in production)            */
+/*  Everything user-facing now lives in SQLite (see db.js):            */
+/*  users, sessions, family_members, family_goal, overview_stats,      */
+/*  agent_messages, stability_snapshots, leak_scans, twin_projections, */
+/*  loan_analyses, trust_events.                                       */
+/*                                                                     */
+/*  What stays as static, in-memory content: the canned agent reply   */
+/*  pools and debate scripts below — these are fixed "content"        */
+/*  (like copy on a page), not per-user data, so a DB table would     */
+/*  add nothing. If you want editable agent scripts later, those      */
+/*  could become a `content` table too.                                */
 /* ------------------------------------------------------------------ */
-
-const users = new Map();      // username -> { passwordHash, question, answerHash }
-const sessions = new Map();   // token -> username
-const familyMembers = [
-  { name: 'Priya', role: 'Parent', access: 'Full access', initial: 'P', color: '#4F7965' },
-  { name: 'Arjun', role: 'Parent', access: 'Full access', initial: 'A', color: '#7B6DB0' },
-  { name: 'Kavya', role: 'Teen', access: 'Restricted', initial: 'K', color: '#C9A227' },
-];
-
-const activeSessionsDemo = [
-  { device: 'Chrome · macOS', location: 'Chennai, IN', lastActive: 'Just now', current: true },
-  { device: 'FinGenie App · Android', location: 'Chennai, IN', lastActive: '2 hrs ago', current: false },
-  { device: 'Safari · iOS', location: 'Bengaluru, IN', lastActive: '3 days ago', current: false },
-];
-
-const adminUsers = [
-  { user: 'priya.k', flags: 0, lastActive: 'Just now', status: 'Active' },
-  { user: 'arjun.m', flags: 1, lastActive: '1 hr ago', status: 'Active' },
-  { user: 'rahul_v', flags: 3, lastActive: '2 days ago', status: 'Under review' },
-];
 
 /* ------------------------------------------------------------------ */
 /*  Helpers                                                            */
@@ -70,9 +84,9 @@ function maskUsername(u) {
 function requireAuth(req, res, next) {
   const header = req.headers.authorization || '';
   const token = header.startsWith('Bearer ') ? header.slice(7) : null;
-  const username = token && sessions.get(token);
-  if (!username) return res.status(401).json({ ok: false, error: 'Not authenticated.' });
-  req.username = username;
+  const row = token && getSessionUser.get(token);
+  if (!row) return res.status(401).json({ ok: false, error: 'Not authenticated.' });
+  req.username = row.username;
   next();
 }
 
@@ -102,46 +116,48 @@ app.post('/api/auth/register', (req, res) => {
   if (!(rules.len && rules.letter && rules.number && rules.special)) {
     return res.status(400).json({ ok: false, error: 'Password needs 8+ characters, a letter, a number, and @ or a special character.' });
   }
-  if (users.has(username)) {
+  if (getUser.get(username)) {
     return res.status(409).json({ ok: false, error: 'That username is already registered.' });
   }
-  users.set(username, {
-    passwordHash: sha256(password),
-    question: question || 'school',
-    answerHash: sha256(answer),
-  });
+  createUser.run(username, sha256(password), question || 'school', sha256(answer));
+  seedOverviewStats.run(username);
+  addTrustEvent.run(username, 'Account created');
   res.json({ ok: true, message: 'Account created — password and answer stored only as SHA-256 hashes.' });
 });
 
 app.post('/api/auth/login', (req, res) => {
   const { username, password } = req.body || {};
-  const record = users.get(username);
+  const record = getUser.get(username);
   if (!record) return res.status(404).json({ ok: false, error: 'No account found — create one first.' });
   if (sha256(password) !== record.passwordHash) {
     return res.status(401).json({ ok: false, error: 'Incorrect password.' });
   }
   const token = newToken();
-  sessions.set(token, username);
+  const device = req.headers['user-agent'] || 'Unknown device';
+  const location = req.ip || 'Unknown location';
+  createSession.run(token, username, device, location);
+  addTrustEvent.run(username, 'Signed in');
   res.json({ ok: true, token, username, maskedUsername: maskUsername(username) });
 });
 
 app.post('/api/auth/logout', requireAuth, (req, res) => {
   const header = req.headers.authorization || '';
   const token = header.slice(7);
-  sessions.delete(token);
+  deleteSession.run(token);
+  addTrustEvent.run(req.username, 'Signed out');
   res.json({ ok: true });
 });
 
 app.post('/api/auth/recover/question', (req, res) => {
   const { username } = req.body || {};
-  const record = users.get(username);
+  const record = getUser.get(username);
   if (!record) return res.status(404).json({ ok: false, error: `No account found for "${username}" on this server.` });
   res.json({ ok: true, question: questionText[record.question] });
 });
 
 app.post('/api/auth/recover/verify', (req, res) => {
   const { username, answer } = req.body || {};
-  const record = users.get(username);
+  const record = getUser.get(username);
   if (!record) return res.status(404).json({ ok: false, error: 'No account found.' });
   const match = sha256(answer) === record.answerHash;
   res.json({
@@ -161,13 +177,20 @@ app.get('/api/auth/me', requireAuth, (req, res) => {
 /* ------------------------------------------------------------------ */
 
 app.get('/api/overview', requireAuth, (req, res) => {
+  seedOverviewStats.run(req.username); // safety net for accounts created before this table existed
+  const row = getOverviewStats.get(req.username);
+  const mask = (s) => s.replace(/[0-9]/g, '•');
+  const income = `₹${row.netMonthlyIncome.toLocaleString('en-IN')}`;
+  const debt = `₹${row.activeDebtBalance.toLocaleString('en-IN')}`;
+  const runway = `${row.savingsRunwayMonths} mo`;
+  const stability = `${row.stabilityIndex} / 100`;
   res.json({
     ok: true,
     stats: {
-      netMonthlyIncome: { real: '₹85,400', masked: '₹ ••,•••' },
-      activeDebtBalance: { real: '₹2,14,000', masked: '₹ •,••,•••' },
-      savingsRunway: { real: '6.2 mo', masked: '•.• mo' },
-      stabilityIndex: { real: '68 / 100', masked: '•• / 100' },
+      netMonthlyIncome: { real: income, masked: mask(income) },
+      activeDebtBalance: { real: debt, masked: mask(debt) },
+      savingsRunway: { real: runway, masked: mask(runway) },
+      stabilityIndex: { real: stability, masked: mask(stability) },
     },
   });
 });
@@ -208,10 +231,17 @@ const agentReplies = {
 };
 
 app.post('/api/agents/chat', requireAuth, (req, res) => {
-  const { agent } = req.body || {};
+  const { agent, message } = req.body || {};
   const pool = agentReplies[agent] || agentReplies.budget;
   const reply = pool[Math.floor(Math.random() * pool.length)];
+  addAgentMessage.run(req.username, agent || 'budget', message || null, reply);
   res.json({ ok: true, agent, agentLabel: agentNames[agent] || 'Agent', reply });
+});
+
+app.get('/api/agents/history', requireAuth, (req, res) => {
+  const limit = Number(req.query.limit) || 50;
+  const rows = getAgentMessages.all(req.username, limit);
+  res.json({ ok: true, messages: rows.reverse() }); // oldest first for display
 });
 
 /* ------------------------------------------------------------------ */
@@ -267,8 +297,8 @@ app.get('/api/debate/:topic', requireAuth, (req, res) => {
 app.get('/api/family', requireAuth, (req, res) => {
   res.json({
     ok: true,
-    members: familyMembers,
-    goal: { name: 'Family emergency fund', target: 300000, current: 186000 },
+    members: getFamilyMembers.all(),
+    goal: getFamilyGoal.get(),
   });
 });
 
@@ -276,7 +306,7 @@ app.post('/api/family/invite', requireAuth, (req, res) => {
   const { email } = req.body || {};
   if (!email) return res.status(400).json({ ok: false, error: 'Enter an email to invite.' });
   const member = { name: email, role: 'Invited', access: 'Invitation sent', initial: email[0].toUpperCase(), color: 'var(--gold)' };
-  familyMembers.push(member);
+  addFamilyMember.run(member.name, member.role, member.access, member.initial, member.color);
   res.json({ ok: true, member });
 });
 
@@ -285,17 +315,26 @@ app.post('/api/family/invite', requireAuth, (req, res) => {
 /* ------------------------------------------------------------------ */
 
 app.get('/api/stability', requireAuth, (req, res) => {
+  let snap = getLatestStability.get(req.username);
+  if (!snap) {
+    // First time this user hits the endpoint: compute and store a snapshot.
+    addStabilitySnapshot.run(
+      req.username, 68, 'Moderately stable', 81, 54, 62, 73,
+      'Expense volatility is your biggest drag this quarter — dining and subscription spend swing widely month to month.'
+    );
+    snap = getLatestStability.get(req.username);
+  }
   res.json({
     ok: true,
-    index: 68,
-    verdict: 'Moderately stable',
+    index: snap.idx,
+    verdict: snap.verdict,
     metrics: {
-      incomeConsistency: 81,
-      expenseVolatility: 54,
-      debtLoad: 62,
-      emergencyBuffer: 73,
+      incomeConsistency: snap.incomeConsistency,
+      expenseVolatility: snap.expenseVolatility,
+      debtLoad: snap.debtLoad,
+      emergencyBuffer: snap.emergencyBuffer,
     },
-    note: 'Expense volatility is your biggest drag this quarter — dining and subscription spend swing widely month to month.',
+    note: snap.note,
   });
 });
 
@@ -310,7 +349,18 @@ app.post('/api/leak-scan', requireAuth, (req, res) => {
     { name: 'Bank maintenance fee creep', detail: 'Fee rose 3x without notice', amt: 1200 },
   ];
   const total = leaks.reduce((sum, l) => sum + l.amt, 0);
+  addLeakScan.run(req.username, JSON.stringify(leaks), total);
   res.json({ ok: true, leaks, total });
+});
+
+app.get('/api/leak-scan/history', requireAuth, (req, res) => {
+  const limit = Number(req.query.limit) || 20;
+  const rows = getLeakScans.all(req.username, limit).map((r) => ({
+    leaks: JSON.parse(r.leaksJson),
+    total: r.total,
+    createdAt: r.createdAt,
+  }));
+  res.json({ ok: true, scans: rows });
 });
 
 /* ------------------------------------------------------------------ */
@@ -331,11 +381,17 @@ app.post('/api/twin/project', requireAuth, (req, res) => {
     if (m % Math.max(1, Math.floor(months / 40)) === 0 || m === months) points.push(Number(balance.toFixed(2)));
   }
 
+  const narrative = `Saving an extra ₹${savings.toLocaleString('en-IN')} a month at an assumed ${(rate * 100).toFixed(1)}% annual return grows to roughly ₹${Math.round(balance).toLocaleString('en-IN')} after ${years} years.`;
+
+  addTwinProjection.run(
+    req.username, savings, years, rate * 100, Math.round(balance), JSON.stringify(points)
+  );
+
   res.json({
     ok: true,
     points,
     finalBalance: Math.round(balance),
-    narrative: `Saving an extra ₹${savings.toLocaleString('en-IN')} a month at an assumed ${(rate * 100).toFixed(1)}% annual return grows to roughly ₹${Math.round(balance).toLocaleString('en-IN')} after ${years} years.`,
+    narrative,
   });
 });
 
@@ -350,13 +406,18 @@ app.post('/api/loan/analyze', requireAuth, (req, res) => {
     { t: 'Clause 7.1', d: 'Processing fee described as "up to 2.5%" without a fixed figure.' },
     { t: 'Clause 9.4', d: 'Variable rate reset clause lacks a stated cap.' },
   ];
+  const integrityScore = 72;
+  const verdict = 'Suspicious clauses found';
+  addLoanAnalysis.run(
+    req.username, filename || 'document.pdf', sizeKb || 0, JSON.stringify(flags), integrityScore, verdict
+  );
   res.json({
     ok: true,
     filename: filename || 'document.pdf',
     sizeKb: sizeKb || 0,
     flags,
-    integrityScore: 72,
-    verdict: 'Suspicious clauses found',
+    integrityScore,
+    verdict,
   });
 });
 
@@ -365,18 +426,21 @@ app.post('/api/loan/analyze', requireAuth, (req, res) => {
 /* ------------------------------------------------------------------ */
 
 app.get('/api/trust/sessions', requireAuth, (req, res) => {
-  res.json({ ok: true, sessions: activeSessionsDemo });
+  const header = req.headers.authorization || '';
+  const currentToken = header.startsWith('Bearer ') ? header.slice(7) : null;
+  const rows = getSessionsForUser.all(req.username).map((s) => ({
+    device: s.device,
+    location: s.location,
+    lastActive: s.lastSeen,
+    current: s.token === currentToken,
+  }));
+  res.json({ ok: true, sessions: rows });
 });
 
 app.get('/api/trust/events', requireAuth, (req, res) => {
-  res.json({
-    ok: true,
-    events: [
-      'Jul 14 — New device sign-in (Android)',
-      'Jul 09 — Recovery question updated',
-      'Jun 28 — Password changed',
-    ],
-  });
+  const limit = Number(req.query.limit) || 20;
+  const rows = getTrustEvents.all(req.username, limit).map((e) => `${e.createdAt} — ${e.event}`);
+  res.json({ ok: true, events: rows });
 });
 
 /* ------------------------------------------------------------------ */
@@ -384,19 +448,26 @@ app.get('/api/trust/events', requireAuth, (req, res) => {
 /* ------------------------------------------------------------------ */
 
 app.get('/api/admin/stats', requireAuth, (req, res) => {
+  const activeUsers = countUsers.get().n;
   res.json({
     ok: true,
     stats: {
-      activeUsers: 4812,
-      docsAnalyzedToday: 312,
-      flagsRaised: 57,
+      activeUsers,
+      docsAnalyzedToday: 312, // still a placeholder metric — no per-day rollup table yet
+      flagsRaised: 57,        // same: would need a scheduled aggregation job to be real
       avgResponseTime: '1.8s',
     },
   });
 });
 
 app.get('/api/admin/users', requireAuth, (req, res) => {
-  res.json({ ok: true, users: adminUsers });
+  const rows = listUsersForAdmin.all().map((r) => ({
+    user: r.user,
+    flags: r.flags,
+    lastActive: r.lastActive || 'Never',
+    status: r.flags >= 3 ? 'Under review' : 'Active',
+  }));
+  res.json({ ok: true, users: rows });
 });
 
 /* ------------------------------------------------------------------ */
